@@ -23,6 +23,7 @@ import org.apache.beam.runners.core.construction.SerializablePipelineOptions;
 import org.apache.beam.runners.flink.metrics.FlinkMetricContainer;
 import org.apache.beam.runners.flink.metrics.ReaderInvocationUtil;
 import org.apache.beam.sdk.io.BoundedSource;
+import org.apache.beam.sdk.io.FileBasedSource;
 import org.apache.beam.sdk.io.Source;
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.transforms.windowing.GlobalWindow;
@@ -40,8 +41,8 @@ import org.slf4j.LoggerFactory;
 
 /** Wrapper for executing a {@link Source} as a Flink {@link InputFormat}. */
 @SuppressWarnings({
-  "rawtypes", // TODO(https://github.com/apache/beam/issues/20447)
-  "nullness" // TODO(https://github.com/apache/beam/issues/20497)
+    "rawtypes", // TODO(https://github.com/apache/beam/issues/20447)
+    "nullness" // TODO(https://github.com/apache/beam/issues/20497)
 })
 public class SourceInputFormat<T> extends RichInputFormat<WindowedValue<T>, SourceInputSplit<T>> {
   private static final Logger LOG = LoggerFactory.getLogger(SourceInputFormat.class);
@@ -108,12 +109,59 @@ public class SourceInputFormat<T> extends RichInputFormat<WindowedValue<T>, Sour
     return null;
   }
 
+  // private long closestMultiple(long n, long x) {
+  //     if(x>n) {
+  //       return x;
+  //     }
+  //     n = n + x/2;
+  //     n = n - (n%x);
+  //     return n;
+  // }
+
+  private long getDesiredSizeBytes(int numSplits) throws Exception {
+    long totalSize = initialSource.getEstimatedSizeBytes(options);
+    long defaultSplitSize = totalSize / numSplits;
+    if(initialSource instanceof FileBasedSource) {
+      // FileBasedSource fileSource = ((FileBasedSource) initialSource);
+      // long minSize = fileSource.getMinBundleSize();
+      // long targetSize = minSize; // arbitrary factor 4
+      // return targetSize;
+      // ------
+      // long minSize = fileSource.getMinBundleSize();
+      // long targetSize = minSize * 10; // arbitrary factor 10
+      // long targetSplitsNumber = totalSize / targetSize;
+      // long idealNumSplit = closestMultiple(targetSplitsNumber, numSplits);
+      // long idealSplitSize = totalSize / idealNumSplit;
+      // LOG.info("Source is File based. Splitting filepattern of ideal size " + idealSplitSize + ". target size: " + targetSize);
+      // return idealSplitSize;
+      // ------
+      // List<Metadata> allMatches = FileSystems.match(fileSource.getFileOrPatternSpec(), fileSource.getEmptyMatchTreatment()).metadata();
+      // long averageFileSize = Math.round(allMatches.stream().mapToLong(m -> m.sizeBytes()).min().getAsDouble());
+      // long desiredSplitSize = averageFileSize / 10; // arbitrary constant
+      // long bundleSize = Math.min(defaultSplitSize, desiredSplitSize);
+      // LOG.info("Source is File based based. Splitting filepattern. Average files (" + allMatches.size() + ") size was: " + averageFileSize + ". Creating splits of size: " + bundleSize);
+      // Limit the split size to 128 MiB max to avoid split size to always be larger than files
+      return Math.min(defaultSplitSize, 128 * 1024 * 1024);
+    } else {
+      return defaultSplitSize;
+    }
+  }
+
   @Override
   @SuppressWarnings("unchecked")
   public SourceInputSplit<T>[] createInputSplits(int numSplits) throws IOException {
     try {
-      long desiredSizeBytes = initialSource.getEstimatedSizeBytes(options) / numSplits;
+      long desiredSizeBytes = getDesiredSizeBytes(numSplits);
       List<? extends Source<T>> shards = initialSource.split(desiredSizeBytes, options);
+
+      // Sorting does nothing
+      // if(initialSource instanceof FileBasedSource) {
+      //   shards =
+      //     ((List<FileBasedSource<T>>)shards).stream()
+      //       .sorted(Comparator.comparingLong(FileBasedSource::getStartOffset))
+      //       .collect(Collectors.toList());
+      // }
+
       int numShards = shards.size();
       SourceInputSplit<T>[] sourceInputSplits = new SourceInputSplit[numShards];
       for (int i = 0; i < numShards; i++) {
