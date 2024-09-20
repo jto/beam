@@ -17,7 +17,6 @@
  */
 package org.apache.beam.runners.flink;
 
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -26,9 +25,10 @@ import java.util.Map;
 import org.apache.beam.runners.core.KeyedWorkItem;
 import org.apache.beam.runners.core.SystemReduceFn;
 import org.apache.beam.runners.core.construction.SerializablePipelineOptions;
+import org.apache.beam.runners.flink.adapter.FlinkKey;
 import org.apache.beam.runners.flink.translation.types.CoderTypeInformation;
 import org.apache.beam.runners.flink.translation.wrappers.streaming.DoFnOperator;
-import org.apache.beam.runners.flink.translation.wrappers.streaming.KvToByteBufferKeySelector;
+import org.apache.beam.runners.flink.translation.wrappers.streaming.KvToFlinkKeyKeySelector;
 import org.apache.beam.runners.flink.translation.wrappers.streaming.PartialReduceBundleOperator;
 import org.apache.beam.runners.flink.translation.wrappers.streaming.SingletonKeyedWorkItemCoder;
 import org.apache.beam.runners.flink.translation.wrappers.streaming.WindowDoFnOperator;
@@ -46,6 +46,7 @@ import org.apache.beam.sdk.transforms.PTransform;
 import org.apache.beam.sdk.transforms.join.RawUnionValue;
 import org.apache.beam.sdk.transforms.windowing.BoundedWindow;
 import org.apache.beam.sdk.util.AppliedCombineFn;
+import org.apache.beam.sdk.util.CoderUtils;
 import org.apache.beam.sdk.util.WindowedValue;
 import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.PCollection;
@@ -53,9 +54,16 @@ import org.apache.beam.sdk.values.PCollectionView;
 import org.apache.beam.sdk.values.TupleTag;
 import org.apache.beam.sdk.values.WindowingStrategy;
 import org.apache.beam.vendor.guava.v32_1_2_jre.com.google.common.collect.ImmutableList;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
+import org.apache.flink.api.common.typeinfo.PrimitiveArrayTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.tuple.Tuple4;
+import org.apache.flink.api.java.typeutils.TupleTypeInfo;
+import org.apache.flink.api.java.typeutils.ValueTypeInfo;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.DataStreamUtils;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.transformations.TwoInputTransformation;
@@ -214,7 +222,7 @@ public class FlinkStreamingAggregationsTranslators {
 
     // Key selector
     WorkItemKeySelector<K, InputAccumT> workItemKeySelector =
-        new WorkItemKeySelector<>(keyCoder, serializablePipelineOptions);
+        new WorkItemKeySelector<>(keyCoder);
 
     return new WindowDoFnOperator<>(
         reduceFn,
@@ -277,8 +285,9 @@ public class FlinkStreamingAggregationsTranslators {
     TypeInformation<WindowedValue<KV<K, OutputT>>> outputTypeInfo =
         context.getTypeInfo(context.getOutput(transform));
 
+    Coder<AccumT> accumulatorCoder;
     try {
-      Coder<AccumT> accumulatorCoder =
+      accumulatorCoder =
           combineFn.getAccumulatorCoder(
               input.getPipeline().getCoderRegistry(), inputKvCoder.getValueCoder());
 
@@ -311,8 +320,8 @@ public class FlinkStreamingAggregationsTranslators {
     CoderTypeInformation<WindowedValue<KV<K, AccumT>>> partialTypeInfo =
         new CoderTypeInformation<>(windowedAccumCoder, context.getPipelineOptions());
 
-    KvToByteBufferKeySelector<K, AccumT> accumKeySelector =
-        new KvToByteBufferKeySelector<>(inputKvCoder.getKeyCoder(), serializablePipelineOptions);
+        KvToFlinkKeyKeySelector<K, AccumT> accumKeySelector =
+            new KvToFlinkKeyKeySelector<>(inputKvCoder.getKeyCoder());
 
     // final aggregation from AccumT to OutputT
     WindowDoFnOperator<K, AccumT, OutputT> finalDoFnOperator =
@@ -328,15 +337,15 @@ public class FlinkStreamingAggregationsTranslators {
     if (sideInputs.isEmpty()) {
       return inputDataStream
           .transform(partialName, partialTypeInfo, partialDoFnOperator)
-          .uid(partialName)
+          .uid(partialName).name(partialName)
           .keyBy(accumKeySelector)
           .transform(fullName, outputTypeInfo, finalDoFnOperator)
-          .uid(fullName);
+          .uid(fullName).name(fullName);
     } else {
       Tuple2<Map<Integer, PCollectionView<?>>, DataStream<RawUnionValue>> transformSideInputs =
           FlinkStreamingTransformTranslators.transformSideInputs(sideInputs, context);
 
-      KeyedStream<WindowedValue<KV<K, AccumT>>, ByteBuffer> keyedStream =
+      KeyedStream<WindowedValue<KV<K, AccumT>>, FlinkKey> keyedStream =
           inputDataStream
               .transform(partialName, partialTypeInfo, partialDoFnOperator)
               .uid(partialName)
@@ -356,7 +365,7 @@ public class FlinkStreamingAggregationsTranslators {
   })
   public static <K, InputT, OutputT>
       SingleOutputStreamOperator<WindowedValue<KV<K, OutputT>>> buildTwoInputStream(
-          KeyedStream<WindowedValue<KV<K, InputT>>, ByteBuffer> keyedStream,
+          KeyedStream<WindowedValue<KV<K, InputT>>, FlinkKey> keyedStream,
           DataStream<RawUnionValue> sideInputStream,
           String name,
           WindowDoFnOperator<K, InputT, OutputT> operator,
