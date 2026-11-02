@@ -31,13 +31,10 @@
 
 ## New Features / Improvements
 
-* (Java) Flink runner: bounded sources in batch are re-split and balanced, so that work is evenly distributed over the source readers even when sources return too few or unevenly sized splits, e.g. BigQuery exports ([#40607](https://github.com/apache/beam/issues/40607)).
-* (Java) Flink runner: `Reshuffle` in batch distributes elements round-robin from deterministic start channels instead of random ones, so inputs with few elements per sender stay balanced ([#40607](https://github.com/apache/beam/issues/40607)).
 * X feature added (Java/Python) ([#X](https://github.com/apache/beam/issues/X)).
 
 ## Breaking Changes
 
-* (Java) Flink runner: batch pipelines now assign source splits to readers statically by default instead of lazily. Set `--sourceStaticSplitThresholdMb=0` to restore lazy assignment ([#40607](https://github.com/apache/beam/issues/40607)).
 * X behavior was changed ([#X](https://github.com/apache/beam/issues/X)).
 
 ## Deprecations
@@ -71,6 +68,8 @@
 
 ## New Features / Improvements
 
+* (Java) Flink runner: bounded sources in batch are re-split and balanced, so that work is evenly distributed over the source readers even when sources return too few or unevenly sized splits, e.g. BigQuery exports ([#40607](https://github.com/apache/beam/issues/40607)).
+* (Java) Flink runner: `Reshuffle` in batch distributes elements round-robin from deterministic start channels instead of random ones, so inputs with few elements per sender stay balanced ([#40607](https://github.com/apache/beam/issues/40607)).
 * (Java) Flink runner: the batch-only `--lazyBatchGroupingInputs` option is enabled by default (disable it with `--lazyBatchGroupingInputs=false`). Records sent to GroupByKey and Combine operators keep their values encoded until they are accessed, so Flink can move them from the network into its sorter without decoding and re-encoding them ([#40607](https://github.com/apache/beam/issues/40607)).
 * (Java) Flink runner: the batch-only `--lengthPrefixBatchRecords` option is enabled by default (disable it with `--lengthPrefixBatchRecords=false`). Each record is prefixed with its encoded length, so Flink's sorter can spill records to disk without decoding and re-encoding them ([#40607](https://github.com/apache/beam/issues/40607)).
 * (Java) Flink runner: sources now forward Beam metrics to Flink at most once per second instead of after every record, which was a significant share of the CPU of reading. Metrics in the pipeline result are not affected ([#40607](https://github.com/apache/beam/issues/40607)).
@@ -85,6 +84,7 @@
 
 ## Breaking Changes
 
+* (Java) Flink runner: batch pipelines now assign source splits to readers statically by default instead of lazily. Set `--sourceStaticSplitThresholdMb=0` to restore lazy assignment ([#40607](https://github.com/apache/beam/issues/40607)).
 * (Go) The row coder now encodes `int16` and `uint16` struct fields as 2 byte big endian INT16 values, matching the Java and Python SDKs. This is an update incompatible change for streaming pipelines that use rows with `int16` or `uint16` fields ([#40151](https://github.com/apache/beam/issues/40151)).
 * (Java) JmsIO migrated to `jakarta.jms` (JMS 3.1) and ActiveMQ 6.2.5. User code implementing `JmsIO.MessageMapper`,
   `valueMapper`, `topicNameMapper`, or providing a `ConnectionFactory` must update imports from `javax.jms.*` to
